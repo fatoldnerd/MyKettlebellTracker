@@ -1,0 +1,29 @@
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e293b"/>
+      <stop offset="100%" style="stop-color:#0f172a"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="192" height="192" fill="url(#bg)" rx="20"/>
+  
+  <!-- Kettlebell -->
+  <g transform="translate(96, 96)">
+    <!-- Handle -->
+    <path d="M -30 -30 A 30 30 0 0 1 30 -30" 
+          stroke="#ec4899" 
+          stroke-width="12" 
+          fill="none"/>
+    
+    <!-- Ball -->
+    <circle cx="0" cy="20" r="40" fill="#ec4899"/>
+    
+    <!-- Highlight -->
+    <circle cx="-10" cy="5" r="15" fill="rgba(255,255,255,0.3)"/>
+  </g>
+  
+  <!-- Text -->
+  <text x="96" y="165" text-anchor="middle" fill="white" font-family="Arial" font-size="24" font-weight="bold">KB</text>
+</svg>

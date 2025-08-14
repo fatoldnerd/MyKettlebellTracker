@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kettlebell Tracker Pro - Track Your Workouts & Progress</title>
+    <meta name="description" content="Track kettlebell workouts, monitor progress, and achieve fitness goals with our offline-capable Progressive Web App. Features workout templates, analytics, and data export.">
+    
+    <!-- PWA Meta Tags -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#1e293b">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="KB Tracker">
+    <link rel="apple-touch-icon" href="/icons/icon-192.svg">
+    
+    <!-- Preconnect to external domains -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/slim-select/2.8.0/slimselect.min.css" rel="stylesheet"></link>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/slim-select/2.8.0/slimselect.min.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            signInWithCustomToken, 
+            onAuthStateChanged,
+            GoogleAuthProvider,
+            signInWithPopup,
+            signOut,
+            updateProfile as updateAuthProfile 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, collection, addDoc, onSnapshot, query, 
+            deleteDoc, doc, setDoc, getDoc, serverTimestamp 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // !! CRITICAL: YOU MUST REPLACE THE PLACEHOLDER VALUES BELOW WITH YOUR     !!
+        // !! ACTUAL FIREBASE PROJECT CONFIGURATION DETAILS.                      !!
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        const firebaseConfig = {
+            apiKey: "AIzaSyBfTiGJe44ShTccYGGKxEh1aRitgPP0F1Q",
+            authDomain: "my-kettlebell-tracker.firebaseapp.com",
+            projectId: "my-kettlebell-tracker",
+            storageBucket: "my-kettlebell-tracker.firebasestorage.app",
+            messagingSenderId: "571030898720",
+            appId: "1:571030898720:web:84131ba0f94b478cf91445",
+            measurementId: "G-JHLNMNMH5X"
+        };
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // !! END OF CRITICAL CONFIGURATION SECTION                                 !!
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        let app, db, auth;
+
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setLogLevel('debug'); 
+        } catch (e) {
+            console.error("CRITICAL ERROR: Firebase initialization failed. Check your firebaseConfig.", e);
+            const loadingIndicatorError = document.getElementById('loadingIndicator');
+            if (loadingIndicatorError) {
+                loadingIndicatorError.innerHTML = `<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert"><strong class="font-bold">Firebase Init Error!</strong><span class="block sm:inline">Check console. App will not work.</span></div>`;
+                loadingIndicatorError.classList.remove('hidden');
+            }
+            throw new Error("Firebase initialization failed. Halting script."); 
+        }
+
+        const appId = 'my-kettlebell-app-v11-prod';
+        let userId = null;
+        let unsubscribeWorkouts = null;
+        let allWorkoutsData = [];
+        let currentUserProfile = null; 
+        let volumeChartInstance = null;
+        let repsChartInstance = null;
+        let timeChartInstance = null;
+        let exerciseFilterSlimSelect = null;
+
+        // DOM Elements
+        let landingPage, appContainer, getStartedButton, backToHomeButton, openTimerButton, timerModal, closeTimerButton,
+            timerDisplay, setCountdownInput, setCountdownButton, startPauseTimerButton, resetTimerButton,
+            workoutForm, workoutDateInput, overallWorkoutNameInput, timeCompletedInput, workoutFormatSelect,
+            dynamicFieldsContainer, workoutsList, authContainer, signInWithGoogleButton, signOutButton,
+            userInfoDisplay, authStatus, loadingIndicator, noWorkoutsMessage, viewToggleButtons,
+            formView, progressView, profileView, profileDisplaySection, profileEditSection,
+            profilePhotoDisplay, profileNameDisplay, profileAgeDisplay, profileExperienceDisplay,
+            profileGoalsDisplay, profileActivitiesDisplay, profileBioDisplay, editProfileButton,
+            profileForm, profileDisplayNameInput, profileAgeInput, profileExperienceInput,
+            profileGoalsInput, profileActivitiesInput, profileBioInput, saveProfileButton,
+            cancelEditProfileButton, workoutsThisWeekEl, workoutsThisMonthEl, volumeChartCtx,
+            repsChartCtx, timeChartCtx, repPrTableBody, weightPrTableBody, exerciseFilterSelect,
+            yearFilterSelect, monthFilterSelect;
+
+
+        function initializeDOMReferences() {
+            landingPage = document.getElementById('landingPage');
+            appContainer = document.getElementById('appContainer');
+            getStartedButton = document.getElementById('getStartedButton');
+            backToHomeButton = document.getElementById('backToHomeButton'); 
+            openTimerButton = document.getElementById('openTimerButton');
+            timerModal = document.getElementById('timerModal');
+            closeTimerButton = document.getElementById('closeTimerButton');
+            timerDisplay = document.getElementById('timerDisplay');
+            setCountdownInput = document.getElementById('setCountdownInput');
+            setCountdownButton = document.getElementById('setCountdownButton');
+            startPauseTimerButton = document.getElementById('startPauseTimerButton');
+            resetTimerButton = document.getElementById('resetTimerButton');
+            workoutForm = document.getElementById('workoutForm');
+            workoutDateInput = document.getElementById('workoutDate');
+            overallWorkoutNameInput = document.getElementById('overallWorkoutName');
+            timeCompletedInput = document.getElementById('timeCompleted'); 
+            workoutFormatSelect = document.getElementById('workoutFormat');
+            dynamicFieldsContainer = document.getElementById('dynamicFieldsContainer');
+            workoutsList = document.getElementById('workoutsList');
+            authContainer = document.getElementById('authContainer');
+            signInWithGoogleButton = document.getElementById('signInWithGoogleButton');
+            signOutButton = document.getElementById('signOutButton');
+            userInfoDisplay = document.getElementById('userInfoDisplay');
+            authStatus = document.getElementById('authStatus');
+            loadingIndicator = document.getElementById('loadingIndicator');
+            noWorkoutsMessage = document.getElementById('noWorkoutsMessage');
+            viewToggleButtons = document.querySelectorAll('.view-toggle-btn');
+            formView = document.getElementById('formView');
+            progressView = document.getElementById('progressView');
+            profileView = document.getElementById('profileView'); 
+            profileDisplaySection = document.getElementById('profileDisplaySection');
+            profileEditSection = document.getElementById('profileEditSection');
+            profilePhotoDisplay = document.getElementById('profilePhotoDisplay');
+            profileNameDisplay = document.getElementById('profileNameDisplay');
+            profileAgeDisplay = document.getElementById('profileAgeDisplay');
+            profileExperienceDisplay = document.getElementById('profileExperienceDisplay');
+            profileGoalsDisplay = document.getElementById('profileGoalsDisplay');
+            profileActivitiesDisplay = document.getElementById('profileActivitiesDisplay');
+            profileBioDisplay = document.getElementById('profileBioDisplay');
+            editProfileButton = document.getElementById('editProfileButton');
+            profileForm = document.getElementById('profileForm');
+            profileDisplayNameInput = document.getElementById('profileDisplayNameInput');
+            profileAgeInput = document.getElementById('profileAgeInput');
+            profileExperienceInput = document.getElementById('profileExperienceInput');
+            profileGoalsInput = document.getElementById('profileGoalsInput');
+            profileActivitiesInput = document.getElementById('profileActivitiesInput');
+            profileBioInput = document.getElementById('profileBioInput');
+            saveProfileButton = document.getElementById('saveProfileButton');
+            cancelEditProfileButton = document.getElementById('cancelEditProfileButton');
+            workoutsThisWeekEl = document.getElementById('workoutsThisWeek');
+            workoutsThisMonthEl = document.getElementById('workoutsThisMonth');
+            volumeChartCtx = document.getElementById('volumeOverTimeChart')?.getContext('2d');
+            repsChartCtx = document.getElementById('repsOverTimeChart')?.getContext('2d');
+            timeChartCtx = document.getElementById('timeOverTimeChart')?.getContext('2d');
+            repPrTableBody = document.getElementById('repPrTableBody');
+            weightPrTableBody = document.getElementById('weightPrTableBody');
+            exerciseFilterSelect = document.getElementById('exerciseFilterSelect');
+            yearFilterSelect = document.getElementById('yearFilterSelect');
+            monthFilterSelect = document.getElementById('monthFilterSelect');
+        }
+        
+        const PREDEFINED_EXERCISES = [
+            "Kettlebell Snatches", "Kettlebell Swings", "Kettlebell Cleans", "Turkish Get-ups", "Kettlebell Press","Push-ups", "Military Press",
+            "Pull-ups", "Dips", "Goblet Squats", "Bent-Over Rows", "Other"
+        ];
+        const EXPERIENCE_LEVELS = ["Not Specified", "Beginner", "Intermediate", "Advanced"];
+
+        let timerInterval = null;
+        let currentTimeInSeconds = 0;
+        let isTimerRunning = false;
+        let isCountdownMode = false;
+        let countdownDurationSeconds = 0;
+        let synth; 
+
+        // --- Authentication ---
+        async function initialAuthSetup() {
+            if(loadingIndicator) loadingIndicator.classList.remove('hidden');
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                try { 
+                    console.log("Attempting to sign in with custom token...");
+                    await signInWithCustomToken(auth, __initial_auth_token); 
+                } 
+                catch (error) { 
+                    console.error("Error signing in with custom token:", error); 
+                    await signInAnonymouslyIfNeeded(); 
+                }
+            } else {
+                 if (!auth.currentUser) {
+                    console.log("No custom token and no current user, onAuthStateChanged will attempt anonymous sign-in.");
+                 } else {
+                    console.log("No custom token, but a user is already present. onAuthStateChanged will handle.");
+                 }
+            }
+        }
+        async function signInAnonymouslyIfNeeded() {
+            if (!auth.currentUser) { 
+                try {
+                    console.log("Attempting anonymous sign-in...");
+                    await signInAnonymously(auth);
+                } 
+                catch (error) { 
+                    console.error("CRITICAL Error during anonymous sign-in:", error); 
+                    if(authStatus) authStatus.textContent = `Auth Error: ${error.message}. App may not work.`; 
+                    userId = `local-error-${crypto.randomUUID()}`; 
+                    updateAuthUI(null); 
+                    allWorkoutsData = []; renderWorkouts([]); renderProgressData();
+                    if(loadingIndicator) loadingIndicator.classList.add('hidden');
+                }
+            } else {
+                console.log("signInAnonymouslyIfNeeded called, but a user already exists. Letting onAuthStateChanged handle.");
+                if(loadingIndicator) loadingIndicator.classList.add('hidden');
+            }
+        }
+        onAuthStateChanged(auth, async (user) => {
+            console.log("onAuthStateChanged triggered. User:", user ? user.uid : 'null', "Anonymous:", user ? user.isAnonymous : 'N/A');
+            if(loadingIndicator) loadingIndicator.classList.remove('hidden'); 
+            try {
+                if (user) { 
+                    userId = user.uid; 
+                    if (authStatus) { 
+                        if (user.isAnonymous) {
+                            authStatus.textContent = "Ready to Sign In";
+                        } else {
+                            authStatus.textContent = "Signed In";
+                        }
+                    }
+                    updateAuthUI(user); 
+                    await loadWorkouts(); 
+                    await loadUserProfile(); 
+                } 
+                else { 
+                    console.log("User is null in onAuthStateChanged. Attempting anonymous sign-in as fallback."); 
+                    userId = null; currentUserProfile = null; 
+                    allWorkoutsData = []; renderWorkouts([]); renderProgressData(); updateAuthUI(null);
+                    if(authStatus) authStatus.textContent = "Not Signed In"; 
+                    await signInAnonymouslyIfNeeded(); 
+                }
+            } catch (e) {
+                console.error("Error in onAuthStateChanged:", e);
+                if(authStatus) authStatus.textContent = "Error loading user data.";
+            } 
+        });
+        function updateAuthUI(user) {
+            if (!signInWithGoogleButton || !signOutButton || !userInfoDisplay) return; 
+            if (user && !user.isAnonymous) { 
+                signInWithGoogleButton.classList.add('hidden'); 
+                signOutButton.classList.remove('hidden');
+                userInfoDisplay.textContent = `Signed in as: ${user.displayName || user.email || 'Google User'}`;
+                userInfoDisplay.classList.remove('hidden');
+            } else { 
+                signInWithGoogleButton.classList.remove('hidden'); 
+                signOutButton.classList.add('hidden');
+                userInfoDisplay.classList.add('hidden'); 
+                userInfoDisplay.textContent = '';
+            }
+        }
+        async function handleSignInWithGoogle() {
+            const provider = new GoogleAuthProvider();
+            provider.setCustomParameters({
+              prompt: 'select_account' 
+            });
+            try { 
+                if(loadingIndicator) loadingIndicator.classList.remove('hidden'); 
+                await signInWithPopup(auth, provider);
+            } 
+            catch (error) { 
+                console.error("Error signing in with Google:", error); 
+                if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+                    alert(`Google Sign-In Error: ${error.message}`);
+                }
+                if (!auth.currentUser) { 
+                   await signInAnonymouslyIfNeeded();
+                }
+            } finally {
+                 if(loadingIndicator) loadingIndicator.classList.add('hidden'); 
+            }
+        }
+        async function handleSignOut() {
+            try { 
+                if(loadingIndicator) loadingIndicator.classList.remove('hidden'); 
+                allWorkoutsData = []; renderWorkouts([]); renderProgressData(); updateAuthUI(null);
+                if(authStatus) authStatus.textContent = "Signing out...";
+                
+                await signOut(auth);
+                console.log("User signed out successfully. Anonymous sign-in will be attempted by onAuthStateChanged.");
+            } 
+            catch (error) { 
+                console.error("Error signing out:", error); 
+                alert(`Sign Out Error: ${error.message}`);
+                updateAuthUI(auth.currentUser); 
+            } 
+        }
+
+        function getWorkoutsCollectionPath() {
+            if (!userId) { return null; }
+            return `artifacts/${appId}/users/${userId}/kettlebellWorkouts_v11`; 
+        }
+        function getUserProfileDocRef() {
+            if (!userId) return null;
+            return doc(db, "userProfiles", userId); 
+        }
+
+        async function loadUserProfile() {
+            if (!userId) { 
+                console.log("loadUserProfile: No user, cannot load profile.");
+                renderProfileDisplay(null); 
+                showProfileEditForm(false); 
+                return; 
+            }
+            const docRef = getUserProfileDocRef();
+            if (!docRef) { 
+                console.log("loadUserProfile: Could not get profile doc ref.");
+                return;
+            }
+            if (profileView && !profileView.classList.contains('hidden') && loadingIndicator) {
+                 loadingIndicator.classList.remove('hidden');
+            }
+            try {
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    currentUserProfile = docSnap.data();
+                    console.log("Profile data loaded:", currentUserProfile);
+                } else {
+                    console.log("No profile found for user, setting up default for edit.");
+                    currentUserProfile = { 
+                        displayName: auth.currentUser?.displayName || '',
+                        photoURL: auth.currentUser?.photoURL || '',
+                        age: null,
+                        experienceLevel: 'Not Specified',
+                        goals: '',
+                        activities: '',
+                        customBio: ''
+                    };
+                }
+                renderProfileDisplay(currentUserProfile);
+                populateProfileEditForm(currentUserProfile);
+                if (profileView && !profileView.classList.contains('hidden')) {
+                     showProfileEditForm(!docSnap.exists()); 
+                }
+            } catch (error) {
+                console.error("Error loading user profile:", error);
+                alert("Could not load user profile.");
+                renderProfileDisplay(null); 
+            } finally {
+                if(loadingIndicator) loadingIndicator.classList.add('hidden');
+            }
+        }
+        function renderProfileDisplay(profile) {
+            const authUser = auth.currentUser;
+            if (!profilePhotoDisplay || !profileNameDisplay || !profileAgeDisplay || !profileExperienceDisplay || !profileGoalsDisplay || !profileActivitiesDisplay || !profileBioDisplay) return;
+            profilePhotoDisplay.src = profile?.photoURL || authUser?.photoURL || 'https://via.placeholder.com/150?text=No+Image';
+            profileNameDisplay.textContent = profile?.displayName || authUser?.displayName || 'User Name';
+            profileAgeDisplay.textContent = profile?.age ? `Age: ${profile.age}` : 'Age: Not Specified';
+            profileExperienceDisplay.textContent = profile?.experienceLevel ? `Experience: ${profile.experienceLevel}` : 'Experience: Not Specified';
+            profileGoalsDisplay.innerHTML = profile?.goals ? profile.goals.replace(/\n/g, '<br>') : '<em>No goals set yet.</em>';
+            profileActivitiesDisplay.innerHTML = profile?.activities ? profile.activities.replace(/\n/g, '<br>') : '<em>No activities listed.</em>';
+            profileBioDisplay.innerHTML = profile?.customBio ? profile.customBio.replace(/\n/g, '<br>') : '<em>No bio yet.</em>';
+        }
+        function populateProfileEditForm(profile) {
+            const authUser = auth.currentUser;
+            if (!profileDisplayNameInput || !profileAgeInput || !profileExperienceInput || !profileGoalsInput || !profileActivitiesInput || !profileBioInput) return;
+            profileDisplayNameInput.value = profile?.displayName || authUser?.displayName || '';
+            profileAgeInput.value = profile?.age || '';
+            profileExperienceInput.innerHTML = ''; 
+            EXPERIENCE_LEVELS.forEach(level => {
+                const option = document.createElement('option');
+                option.value = level;
+                option.textContent = level;
+                if (profile?.experienceLevel === level) {
+                    option.selected = true;
+                } else if (!profile?.experienceLevel && level === "Not Specified") {
+                    option.selected = true;
+                }
+                profileExperienceInput.appendChild(option);
+            });
+            profileGoalsInput.value = profile?.goals || '';
+            profileActivitiesInput.value = profile?.activities || '';
+            profileBioInput.value = profile?.customBio || '';
+        }
+        function showProfileEditForm(showEdit) {
+            if (!profileDisplaySection || !profileEditSection) return;
+            if (showEdit) {
+                populateProfileEditForm(currentUserProfile || { displayName: auth.currentUser?.displayName, photoURL: auth.currentUser?.photoURL }); 
+                profileDisplaySection.classList.add('hidden');
+                profileEditSection.classList.remove('hidden');
+            } else {
+                profileEditSection.classList.add('hidden');
+                profileDisplaySection.classList.remove('hidden');
+            }
+        }
+        async function handleSaveProfile(e) {
+            e.preventDefault();
+            if (!userId) { alert("Not signed in."); return; }
+            const docRef = getUserProfileDocRef();
+            if (!docRef) return;
+            const newDisplayName = profileDisplayNameInput.value.trim();
+            const profileData = {
+                displayName: newDisplayName,
+                age: profileAgeInput.value ? parseInt(profileAgeInput.value) : null,
+                experienceLevel: profileExperienceInput.value,
+                goals: profileGoalsInput.value.trim(),
+                activities: profileActivitiesInput.value.trim(),
+                customBio: profileBioInput.value.trim(),
+                photoURL: currentUserProfile?.photoURL || auth.currentUser?.photoURL || null, 
+                updatedAt: serverTimestamp(),
+            };
+            if (!currentUserProfile || !currentUserProfile.createdAt) { 
+                profileData.createdAt = serverTimestamp();
+            }
+            if(loadingIndicator) loadingIndicator.classList.remove('hidden');
+            try {
+                await setDoc(docRef, profileData, { merge: true });
+                if (auth.currentUser && auth.currentUser.displayName !== newDisplayName && newDisplayName !== "") {
+                    await updateAuthProfile(auth.currentUser, { displayName: newDisplayName });
+                    console.log("Firebase Auth display name updated.");
+                }
+                alert("Profile saved successfully!");
+                currentUserProfile = { ...currentUserProfile, ...profileData, updatedAt: new Date(), createdAt: currentUserProfile?.createdAt || new Date() }; 
+                renderProfileDisplay(currentUserProfile); 
+                showProfileEditForm(false); 
+            } catch (error) {
+                console.error("Error saving profile:", error);
+                alert(`Error saving profile: ${error.message}`);
+            } finally {
+                if(loadingIndicator) loadingIndicator.classList.add('hidden');
+            }
+        }
+        
+        function updateDynamicFields() { 
+            if (!workoutFormatSelect || !dynamicFieldsContainer) return;
+            const format = workoutFormatSelect.value; dynamicFieldsContainer.innerHTML = ''; amrapExerciseCount = 1; emomExerciseCount = 1;  
+            if (format === 'single') dynamicFieldsContainer.innerHTML = createExerciseBlockHTML('singleEx', 'Exercise Details', true, true); 
+            else if (format === 'superset') dynamicFieldsContainer.innerHTML = `${createExerciseBlockHTML('supersetEx1', 'Exercise 1')}${createExerciseBlockHTML('supersetEx2', 'Exercise 2')}<div class="mt-4"><label for="supersetRounds" class="block text-sm font-medium text-slate-300 mb-1">Rounds Completed</label><input type="number" id="supersetRounds" name="supersetRounds" placeholder="e.g., 5" min="1" required class="input-field"></div>`;
+            else if (format === 'amrap') { dynamicFieldsContainer.innerHTML = `<div id="amrapExercisesContainer">${createExerciseBlockHTML('amrapEx1', 'Exercise 1 (in the AMRAP)', false)}</div><button type="button" id="addAmrapExerciseBtn" class="mt-2 text-sm text-pink-500 hover:text-pink-400">+ Add another exercise to AMRAP</button><div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4"><div><label for="amrapDuration" class="block text-sm font-medium text-slate-300 mb-1">Duration (minutes)</label><input type="number" id="amrapDuration" name="amrapDuration" placeholder="e.g., 20" min="1" required class="input-field"></div><div><label for="amrapRoundsCompleted" class="block text-sm font-medium text-slate-300 mb-1">Rounds/Total Reps Completed</label><input type="text" id="amrapRoundsCompleted" name="amrapRoundsCompleted" placeholder="e.g., 15 rounds or 150 reps" required class="input-field"></div></div>`; if(document.getElementById('addAmrapExerciseBtn')) document.getElementById('addAmrapExerciseBtn').addEventListener('click', addAmrapExerciseField); }
+            else if (format === 'emom') { dynamicFieldsContainer.innerHTML = `<div id="emomExercisesContainer">${createExerciseBlockHTML('emomEx1', 'Exercise(s) per Minute', false)}</div><button type="button" id="addEmomExerciseBtn" class="mt-2 text-sm text-pink-500 hover:text-pink-400">+ Add another exercise to EMOM</button><div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4"><div><label for="emomDuration" class="block text-sm font-medium text-slate-300 mb-1">Total Duration (minutes)</label><input type="number" id="emomDuration" name="emomDuration" placeholder="e.g., 20" min="1" required class="input-field"></div><div><label for="emomInterval" class="block text-sm font-medium text-slate-300 mb-1">EMOM Interval (minutes)</label><input type="number" id="emomInterval" name="emomInterval" value="1" min="1" required class="input-field"></div></div>`; if(document.getElementById('addEmomExerciseBtn')) document.getElementById('addEmomExerciseBtn').addEventListener('click', addEmomExerciseField); }
+            dynamicFieldsContainer.innerHTML += `<div class="mt-4"><label for="overallNotes" class="block text-sm font-medium text-slate-300 mb-1">Overall Workout Notes</label><textarea id="overallNotes" name="overallNotes" rows="3" class="input-field" placeholder="General notes..."></textarea></div>`;
+            attachExerciseNameListeners();
+        }
+        function createExerciseDropdownHTML(prefix) { let options = PREDEFINED_EXERCISES.map(ex => `<option value="${ex}">${ex}</option>`).join(''); return `<select id="${prefix}ExerciseName" name="${prefix}ExerciseName" class="input-field exercise-name-select" data-prefix="${prefix}">${options}</select><input type="text" id="${prefix}OtherExerciseName" name="${prefix}OtherExerciseName" class="input-field mt-2 hidden" placeholder="Enter other exercise name">`; }
+        function createExerciseBlockHTML(prefix, title, includeSets = true, isSingle = false) { const repsLabelDefault = includeSets ? 'Reps (per set)' : 'Reps'; const repsLabel = isSingle ? 'Reps Each Arm (per set)' : repsLabelDefault; return `<div class="exercise-block border border-slate-700 p-4 rounded-md mt-4 bg-slate-700/50" data-prefix="${prefix}"><h4 class="text-md font-semibold mb-2 text-slate-100">${title}</h4><div><label for="${prefix}ExerciseName" class="block text-sm font-medium text-slate-300 mb-1">Exercise</label>${createExerciseDropdownHTML(prefix)}</div><div id="${prefix}SnatchOptionsContainer" class="mt-2 hidden"></div><div class="grid grid-cols-1 ${includeSets ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-4 mt-2"><div><label for="${prefix}Weight" class="block text-sm font-medium text-slate-300 mb-1">Weight (kg)</label><input type="number" id="${prefix}Weight" name="${prefix}Weight" min="0" step="0.5" class="input-field"></div><div><label for="${prefix}Reps" id="${prefix}RepsLabel" class="block text-sm font-medium text-slate-300 mb-1">${repsLabel}</label><input type="number" id="${prefix}Reps" name="${prefix}Reps" min="0" required class="input-field"></div>${includeSets ? `<div><label for="${prefix}Sets" class="block text-sm font-medium text-slate-300 mb-1">Sets</label><input type="number" id="${prefix}Sets" name="${prefix}Sets" min="0" class="input-field"></div>` : ''}</div>${isSingle ? `<div class="mt-2"><label for="${prefix}TargetReps" class="block text-sm font-medium text-slate-300 mb-1">Target Reps (Total)</label><input type="number" id="${prefix}TargetReps" name="${prefix}TargetReps" placeholder="100" min="0" class="input-field"></div>` : ''}<div class="mt-2"><label for="${prefix}Notes" class="block text-sm font-medium text-slate-300 mb-1">Notes</label><textarea id="${prefix}Notes" name="${prefix}Notes" rows="2" class="input-field" placeholder="e.g. form felt good"></textarea></div></div>`; }
+        function attachExerciseNameListeners() { document.querySelectorAll('.exercise-name-select').forEach(selectElement => { selectElement.addEventListener('change', handleExerciseNameChange); handleExerciseNameChange({ target: selectElement }); }); }
+        function handleExerciseNameChange(event) { const selectElement = event.target; const prefix = selectElement.dataset.prefix; const otherInput = document.getElementById(`${prefix}OtherExerciseName`); const repsLabelEl = document.getElementById(`${prefix}RepsLabel`); const snatchOptionsContainer = document.getElementById(`${prefix}SnatchOptionsContainer`); if (!otherInput || !repsLabelEl || !snatchOptionsContainer) return; if (selectElement.value === "Other") { otherInput.classList.remove('hidden'); otherInput.required = true; } else { otherInput.classList.add('hidden'); otherInput.required = false; otherInput.value = ''; } const isSingleFormat = workoutFormatSelect.value === 'single' && prefix === 'singleEx'; if (isSingleFormat && selectElement.value === "Kettlebell Snatches") { repsLabelEl.textContent = 'Reps Each Arm (per set)'; } else { const hasSetsField = !!document.getElementById(`${prefix}Sets`); repsLabelEl.textContent = hasSetsField ? 'Reps (per set)' : 'Reps'; } }
+        let amrapExerciseCount = 1; function addAmrapExerciseField() { amrapExerciseCount++; const c = document.getElementById('amrapExercisesContainer'); const n = document.createElement('div'); n.innerHTML = createExerciseBlockHTML(`amrapEx${amrapExerciseCount}`, `Exercise ${amrapExerciseCount} (AMRAP)`, false); c.appendChild(n); attachExerciseNameListeners(); }
+        let emomExerciseCount = 1; function addEmomExerciseField() { emomExerciseCount++; const c = document.getElementById('emomExercisesContainer'); const n = document.createElement('div'); n.innerHTML = createExerciseBlockHTML(`emomEx${emomExerciseCount}`, `Exercise ${emomExerciseCount} (EMOM)`, false); c.appendChild(n); attachExerciseNameListeners(); }
+        async function addWorkout(e) { 
+            e.preventDefault(); 
+            e.stopPropagation();
+            if (!userId) { alert("User not authenticated."); return; } 
+            const workoutsCollectionPath = getWorkoutsCollectionPath(); 
+            if (!workoutsCollectionPath) { return; }
+            let timeCompletedSeconds = null;
+            if (timeCompletedInput && timeCompletedInput.value) {
+                const timeParts = timeCompletedInput.value.split(':');
+                if (timeParts.length === 2) {
+                    const minutes = parseInt(timeParts[0]);
+                    const seconds = parseInt(timeParts[1]);
+                    if (!isNaN(minutes) && !isNaN(seconds) && seconds >= 0 && seconds < 60 && minutes >=0) {
+                        timeCompletedSeconds = (minutes * 60) + seconds;
+                    } else { alert("Invalid time format. Please use MM:SS or leave blank."); return; }
+                } else if (timeCompletedInput.value.trim() !== "") { alert("Invalid time format. Please use MM:SS or leave blank."); return; }
+            }
+            const workoutData = { date: workoutDateInput.value, name: overallWorkoutNameInput.value || "Unnamed Workout", format: workoutFormatSelect.value, exercises: [], details: {}, notes: document.getElementById('overallNotes')?.value || "", createdAt: new Date().toISOString(), totalVolume: 0, calculatedTotalReps: 0, targetRepsOverall: null, timeCompletedSeconds: timeCompletedSeconds };
+            const format = workoutData.format; let isValid = true;
+            if (format === 'single') { const exSelect = document.getElementById('singleExExerciseName'); let exName = exSelect.value; if (exName === "Other") exName = document.getElementById('singleExOtherExerciseName').value; if (!exName) isValid = false; const weight = parseFloat(document.getElementById('singleExWeight').value) || 0; let repsPerSet = parseInt(document.getElementById('singleExReps').value) || 0; const sets = parseInt(document.getElementById('singleExSets').value) || 0; const targetRepsInput = document.getElementById('singleExTargetReps'); workoutData.targetRepsOverall = targetRepsInput ? (parseInt(targetRepsInput.value) || null) : null; let isPerArm = false; if (exName === "Kettlebell Snatches") { workoutData.calculatedTotalReps = (repsPerSet * 2) * sets; isPerArm = true; } else { workoutData.calculatedTotalReps = repsPerSet * sets; } workoutData.exercises.push({ name: exName, weight: weight, reps: repsPerSet, sets: sets, isPerArm: isPerArm, notes: document.getElementById('singleExNotes')?.value || "" }); workoutData.totalVolume = weight * workoutData.calculatedTotalReps; }
+            else if (format === 'superset' || format === 'amrap' || format === 'emom') { const exerciseBlocks = dynamicFieldsContainer.querySelectorAll('.exercise-block'); let sessionTotalReps = 0; let sessionTotalVolume = 0; exerciseBlocks.forEach(block => { const prefix = block.dataset.prefix; const exSelect = document.getElementById(`${prefix}ExerciseName`); let exName = exSelect.value; if (exName === "Other") exName = document.getElementById(`${prefix}OtherExerciseName`).value; if (!exName) { isValid = false; return; } const weight = parseFloat(document.getElementById(`${prefix}Weight`)?.value) || 0; const reps = parseInt(document.getElementById(`${prefix}Reps`)?.value) || 0; let currentExTotalReps = 0; if (format === 'superset') { const rounds = parseInt(document.getElementById('supersetRounds')?.value) || 0; if (rounds <= 0 && prefix.startsWith('superset')) isValid = false; currentExTotalReps = reps * rounds; } else if (format === 'emom') { const duration = parseInt(document.getElementById('emomDuration')?.value) || 0; const interval = parseInt(document.getElementById('emomInterval')?.value) || 1; if (duration <= 0 && prefix.startsWith('emom')) isValid = false; const numIntervals = (interval > 0) ? duration / interval : 0; currentExTotalReps = reps * numIntervals; } else { currentExTotalReps = reps; } sessionTotalReps += currentExTotalReps; sessionTotalVolume += weight * currentExTotalReps; workoutData.exercises.push({ name: exName, weight: weight, reps: reps, notes: document.getElementById(`${prefix}Notes`)?.value || "" }); }); workoutData.calculatedTotalReps = sessionTotalReps; workoutData.totalVolume = sessionTotalVolume; if (format === 'superset') workoutData.details = { rounds: parseInt(document.getElementById('supersetRounds')?.value) || 0 }; else if (format === 'amrap') workoutData.details = { durationMinutes: parseInt(document.getElementById('amrapDuration')?.value) || 0, roundsCompleted: document.getElementById('amrapRoundsCompleted')?.value || "N/A" }; else if (format === 'emom') workoutData.details = { durationMinutes: parseInt(document.getElementById('emomDuration')?.value) || 0, intervalMinutes: parseInt(document.getElementById('emomInterval')?.value) || 1 }; }
+            if (!workoutData.date || !isValid || workoutData.exercises.length === 0) { alert("Please fill in all required fields."); return; }
+            if(loadingIndicator) loadingIndicator.classList.remove('hidden'); 
+            try { 
+                await addDoc(collection(db, workoutsCollectionPath), workoutData); 
+                alert("Workout logged successfully!");
+                workoutForm.reset(); 
+                if(workoutDateInput) workoutDateInput.valueAsDate = new Date(); 
+                if(timeCompletedInput) timeCompletedInput.value = ''; 
+                updateDynamicFields(); 
+                toggleView('formView');
+            } catch (error) { 
+                console.error("Error adding workout: ", error); 
+                alert(`Error: ${error.message}`); 
+            } finally { 
+                if(loadingIndicator) loadingIndicator.classList.add('hidden'); 
+            }
+        }
+        async function loadWorkouts() { 
+            if (!userId) { console.log("loadWorkouts: no userId, clearing."); allWorkoutsData = []; renderWorkouts([]); renderProgressData(); if(loadingIndicator) loadingIndicator.classList.add('hidden'); return; } 
+            const workoutsCollectionPath = getWorkoutsCollectionPath(); 
+            if (!workoutsCollectionPath) { console.log("loadWorkouts: no path, clearing."); allWorkoutsData = []; renderWorkouts([]); renderProgressData(); if(loadingIndicator) loadingIndicator.classList.add('hidden'); return; } 
+            if(loadingIndicator) loadingIndicator.classList.remove('hidden'); 
+            if (unsubscribeWorkouts) { console.log("Unsubscribing from previous listener."); unsubscribeWorkouts(); unsubscribeWorkouts = null; }
+            console.log("Setting up new listener for:", workoutsCollectionPath);
+            const q = query(collection(db, workoutsCollectionPath)); 
+            unsubscribeWorkouts = onSnapshot(q, (querySnapshot) => { 
+                allWorkoutsData = []; querySnapshot.forEach((doc) => allWorkoutsData.push({ id: doc.id, ...doc.data() })); 
+                allWorkoutsData.sort((a,b) => new Date(b.date) - new Date(a.date) || new Date(b.createdAt) - new Date(a.createdAt)); 
+                renderWorkouts(allWorkoutsData); 
+                populateDateFilters();
+                populateExerciseFilter(); 
+                renderProgressData(); 
+                if(loadingIndicator) loadingIndicator.classList.add('hidden'); 
+            }, (error) => { 
+                console.error("Error fetching workouts: ", error); 
+                if (error.code !== 'permission-denied' && error.code !== 'unauthenticated') { alert(`Error fetching workouts: ${error.message}`); }
+                else { console.warn("Permission denied fetching, auth state change should handle."); }
+                allWorkoutsData = []; renderWorkouts([]); renderProgressData();
+                if(loadingIndicator) loadingIndicator.classList.add('hidden'); 
+            });
+        }
+        function renderWorkouts(workoutsToRender) { 
+            if (!workoutsList || !noWorkoutsMessage) return;
+            workoutsList.innerHTML = ''; if (workoutsToRender.length === 0) { noWorkoutsMessage.classList.remove('hidden'); } else { noWorkoutsMessage.classList.add('hidden'); workoutsToRender.forEach(workout => { const item = document.createElement('div'); item.className = 'bg-slate-700 p-5 rounded-lg shadow-md mb-4 text-slate-300'; let exercisesHtml = workout.exercises.map(ex => { let repInfo = `Reps: ${ex.reps}`; if (ex.sets && workout.format === 'single') repInfo += ` (x${ex.sets} sets)`; if (ex.isPerArm) repInfo += ` (each arm)`; return `<div class="ml-4 mt-2 pb-2 ${workout.exercises.length > 1 ? 'border-b border-slate-600 last:border-b-0' : ''}"><p class="text-lg font-medium text-pink-400">${ex.name}</p>${ex.weight ? `<p class="text-sm text-slate-400">Weight: ${ex.weight} kg</p>` : ''}<p class="text-sm text-slate-400">${repInfo}</p>${ex.notes ? `<p class="text-xs text-slate-500 mt-1 italic">Note: ${ex.notes}</p>` : ''}</div>`; }).join(''); let detailsHtml = ''; if (workout.format === 'superset') detailsHtml = `<p class="text-sm text-slate-400">Rounds: ${workout.details.rounds}</p>`; else if (workout.format === 'amrap') detailsHtml = `<p class="text-sm text-slate-400">Duration: ${workout.details.durationMinutes} min | Completed: ${workout.details.roundsCompleted}</p>`; else if (workout.format === 'emom') detailsHtml = `<p class="text-sm text-slate-400">Duration: ${workout.details.durationMinutes} min (Every ${workout.details.intervalMinutes} min)</p>`; let targetComparisonHtml = ''; if (workout.targetRepsOverall != null && workout.calculatedTotalReps != null) { const diff = workout.calculatedTotalReps - workout.targetRepsOverall; const diffClass = diff >= 0 ? 'text-green-400' : 'text-red-400'; const diffText = diff >= 0 ? `(+${diff})` : `(${diff})`; targetComparisonHtml = `<p class="text-sm font-medium">Achieved: ${workout.calculatedTotalReps} / Target: ${workout.targetRepsOverall} <span class="${diffClass}">${diffText}</span></p>`; } else if (workout.calculatedTotalReps != null) { targetComparisonHtml = `<p class="text-sm font-medium">Total Reps: ${workout.calculatedTotalReps}</p>`; } let timeCompletedHtml = ''; if (workout.timeCompletedSeconds != null) { timeCompletedHtml = `<p class="text-sm font-medium text-blue-400">Time: ${formatTime(workout.timeCompletedSeconds)}</p>`; } item.innerHTML = `<div class="flex justify-between items-start"><div><h3 class="text-xl font-semibold text-slate-100">${workout.name}</h3><p class="text-xs text-slate-500">${new Date(workout.date).toLocaleDateString()} - ${workout.format.toUpperCase()}</p></div><button data-id="${workout.id}" class="delete-workout-btn bg-slate-600 hover:bg-red-600 text-red-400 hover:text-slate-100 text-xs font-bold py-1 px-2 rounded">Del</button></div><div class="mt-3">${detailsHtml}<p class="text-sm text-slate-400 mt-1"><strong>Exercises:</strong></p>${exercisesHtml}</div><div class="mt-2">${targetComparisonHtml}</div><div class="mt-1">${timeCompletedHtml}</div>${workout.notes ? `<p class="text-sm text-slate-500 mt-3 italic">Overall Notes: ${workout.notes}</p>` : ''}<p class="text-sm font-semibold text-slate-200 mt-2">Calculated Volume: ${workout.totalVolume != null ? workout.totalVolume.toFixed(1) : 'N/A'} kg</p>`; workoutsList.appendChild(item); }); }
+        }
+        async function deleteWorkoutItem(workoutId) { 
+            if (!userId) { alert("User not authenticated."); return; } const workoutsCollectionPath = getWorkoutsCollectionPath(); if (!workoutsCollectionPath) return; const confirmed = await window.confirm("Are you sure you want to delete this workout?"); if (!confirmed) return; if(loadingIndicator) loadingIndicator.classList.remove('hidden'); try { await deleteDoc(doc(db, workoutsCollectionPath, workoutId)); } catch (error) { console.error("Error deleting workout:", error); alert(`Error: ${error.message}`);} finally { if(loadingIndicator) loadingIndicator.classList.add('hidden'); }
+        }
+        
+        function renderProgressData() { 
+            if (!allWorkoutsData) return;
+
+            // 1. Calculate frequency from ALL data, regardless of filters.
+            calculateAndDisplayFrequency(allWorkoutsData);
+
+            // 2. Apply Date Filters
+            const selectedYear = yearFilterSelect ? yearFilterSelect.value : 'ALL_TIME';
+            const selectedMonth = monthFilterSelect ? monthFilterSelect.value : 'ALL_MONTHS';
+
+            const dateFilteredWorkouts = allWorkoutsData.filter(session => {
+                const workoutDate = new Date(session.date);
+                const yearMatches = (selectedYear === 'ALL_TIME') || (workoutDate.getFullYear() == selectedYear);
+                const monthMatches = (selectedMonth === 'ALL_MONTHS') || (workoutDate.getMonth() == selectedMonth);
+                return yearMatches && monthMatches;
+            });
+
+            // 3. Apply Exercise Filters
+            const selectedExercises = exerciseFilterSlimSelect ? exerciseFilterSlimSelect.getSelected() : [];
+            let filteredSessionsData = dateFilteredWorkouts;
+            if (selectedExercises.length > 0 && !selectedExercises.includes("ALL_EXERCISES")) {
+                filteredSessionsData = dateFilteredWorkouts.filter(session => {
+                    if (!session.exercises || session.exercises.length === 0) return false;
+                    return selectedExercises.every(selEx =>
+                        session.exercises.some(ex => ex.name === selEx)
+                    );
+                });
+            }
+
+            // Handle view for empty data after filtering
+            if (filteredSessionsData.length === 0) {
+                 let reason = "for the selected filters.";
+                 if (dateFilteredWorkouts.length === 0) {
+                     reason = "for the selected date range.";
+                 } else if (selectedExercises.length > 0 && !selectedExercises.includes("ALL_EXERCISES")) {
+                     reason = "with the selected exercises in this date range.";
+                 } else if (allWorkoutsData.length === 0) {
+                     reason = "yet. Go log a workout!";
+                 }
+                
+                const noPrMessage = `<tr><td colspan="4" class="text-center py-4 text-slate-500">No PRs found ${reason}</td></tr>`;
+                if(repPrTableBody) repPrTableBody.innerHTML = noPrMessage;
+                if(weightPrTableBody) weightPrTableBody.innerHTML = noPrMessage;
+                
+                // Clear charts
+                if (volumeChartInstance) volumeChartInstance.destroy();
+                if (repsChartInstance) repsChartInstance.destroy();
+                if (timeChartInstance) timeChartInstance.destroy();
+
+                // Re-render empty charts to show titles and empty state
+                calculateAndDisplayVolumeChart([], selectedExercises); 
+                calculateAndDisplayRepsOverTimeChart([], selectedExercises);
+                calculateAndDisplayTimeChart([], selectedExercises); 
+                return;
+            }
+
+            // 4. Pass the final filtered data to the display functions
+            calculateAndDisplayVolumeChart(filteredSessionsData, selectedExercises);
+            calculateAndDisplayRepsOverTimeChart(filteredSessionsData, selectedExercises);
+            calculateAndDisplayTimeChart(filteredSessionsData, selectedExercises);
+            calculateAndDisplayRepPRs(filteredSessionsData, selectedExercises);
+            calculateAndDisplayWeightPRs(filteredSessionsData, selectedExercises);
+        }
+
+        function calculateAndDisplayFrequency(dataToUse) { 
+            const now = new Date(); const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); const dayOfWeek = today.getDay(); const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; const startOfWeek = new Date(new Date(today).setDate(today.getDate() + diffToMonday)); startOfWeek.setHours(0,0,0,0); const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1); startOfMonth.setHours(0,0,0,0); let countThisWeek = 0; let countThisMonth = 0; 
+            (dataToUse || []).forEach(w => { const workoutDate = new Date(w.date); workoutDate.setHours(0,0,0,0); if (workoutDate >= startOfWeek) countThisWeek++; if (workoutDate >= startOfMonth) countThisMonth++; }); 
+            if(workoutsThisWeekEl) workoutsThisWeekEl.textContent = countThisWeek; if(workoutsThisMonthEl) workoutsThisMonthEl.textContent = countThisMonth;
+        }
+        const chartTextColor = 'rgb(203, 213, 225)'; const chartGridColor = 'rgba(71, 85, 105, 0.5)'; 
+        const chartDefaultOptions = { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, title: { display: true, text: 'Value', color: chartTextColor }, ticks: { color: chartTextColor, font: { size: 10 } }, grid: { color: chartGridColor, borderColor: chartGridColor } }, x: { ticks: { color: chartTextColor, font: { size: 10 } }, grid: { color: chartGridColor, borderColor: chartGridColor } } }, plugins: { legend: { labels: { color: chartTextColor, font: {size: 12} } }, tooltip: { backgroundColor: 'rgba(30, 41, 59, 0.9)', titleColor: 'rgb(236, 72, 153)', bodyColor: chartTextColor, borderColor: 'rgb(236, 72, 153)', borderWidth: 1, padding: 10, cornerRadius: 4, mode: 'index', intersect: false } }, interaction: { mode: 'index', intersect: false } };
+        
+        function calculateAndDisplayVolumeChart(sessionsToChart, filteredExercises) { 
+            if (!volumeChartCtx) return;
+            const sortedByDate = [...sessionsToChart].sort((a,b) => new Date(a.date) - new Date(b.date));
+            const labels = sortedByDate.map(w => new Date(w.date).toLocaleDateString());
+            const data = sortedByDate.map(session => {
+                if (!filteredExercises || filteredExercises.length === 0 || filteredExercises.includes("ALL_EXERCISES")) { return session.totalVolume || 0; } 
+                else { return session.exercises.reduce((sum, ex) => { if (filteredExercises.includes(ex.name)) { let exVolume = 0; if (session.format === 'single' && ex.sets) { exVolume = ex.weight * ex.reps * ex.sets * (ex.isPerArm ? 2 : 1); } else if (session.format === 'superset' && session.details.rounds) { exVolume = ex.weight * ex.reps * session.details.rounds; } else if (session.format === 'emom' && session.details.durationMinutes && session.details.intervalMinutes > 0) { const numIntervals = session.details.durationMinutes / session.details.intervalMinutes; exVolume = ex.weight * ex.reps * numIntervals; } else if (session.format === 'amrap') { exVolume = ex.weight * ex.reps; } else { exVolume = ex.weight * ex.reps * (ex.sets || 1) * (ex.isPerArm ? 2 : 1); } return sum + (exVolume || 0); } return sum; }, 0); }
+            });
+            if (volumeChartInstance) volumeChartInstance.destroy(); 
+            let newOptions = JSON.parse(JSON.stringify(chartDefaultOptions)); newOptions.scales.y.title.text = 'Volume (kg)';
+            newOptions.plugins.title = { display: true, text: filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") ? `Volume for: ${filteredExercises.join(' & ')}` : 'Overall Session Volume', color: chartTextColor };
+            volumeChartInstance = new Chart(volumeChartCtx, { type: 'line', data: { labels: labels, datasets: [{ label: 'Volume (kg)', data: data, borderColor: 'rgb(59, 130, 246)', tension: 0.2, fill: false, borderWidth: 2, pointBackgroundColor: 'rgb(59, 130, 246)', pointRadius: 3, pointHoverRadius: 5 }] }, options: newOptions });
+        }
+        function calculateAndDisplayRepsOverTimeChart(sessionsToChart, filteredExercises) {
+            if (!repsChartCtx) return; 
+            const sortedByDate = [...sessionsToChart].sort((a,b) => new Date(a.date) - new Date(b.date));
+            const labels = sortedByDate.map(w => new Date(w.date).toLocaleDateString());
+            const actualRepsData = sortedByDate.map(session => {
+                 if (!filteredExercises || filteredExercises.length === 0 || filteredExercises.includes("ALL_EXERCISES")) { return session.calculatedTotalReps || null; } 
+                 else { return session.exercises.reduce((sum, ex) => { if (filteredExercises.includes(ex.name)) { let exReps = 0; if (session.format === 'single' && ex.sets) { exReps = ex.reps * ex.sets * (ex.isPerArm ? 2 : 1); } else if (session.format === 'superset' && session.details.rounds) { exReps = ex.reps * session.details.rounds; } else if (session.format === 'emom' && session.details.durationMinutes && session.details.intervalMinutes > 0) { const numIntervals = session.details.durationMinutes / session.details.intervalMinutes; exReps = ex.reps * numIntervals; } else if (session.format === 'amrap') { exReps = ex.reps; } else { exReps = ex.reps * (ex.sets || 1) * (ex.isPerArm ? 2 : 1); } return sum + (exReps || 0); } return sum; }, 0); }
+            });
+            const targetRepsData = sortedByDate.map(w => (filteredExercises && filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") && w.format === 'single' && w.exercises.some(ex => filteredExercises.includes(ex.name))) ? w.targetRepsOverall || null : ( (!filteredExercises || filteredExercises.length === 0 || filteredExercises.includes("ALL_EXERCISES")) ? w.targetRepsOverall || null : null) ); 
+            if (repsChartInstance) repsChartInstance.destroy(); 
+            let newOptions = JSON.parse(JSON.stringify(chartDefaultOptions)); newOptions.scales.y.title.text = 'Number of Reps';
+            newOptions.plugins.title = { display: true, text: filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") ? `Reps for: ${filteredExercises.join(' & ')}` : 'Overall Session Reps', color: chartTextColor };
+            repsChartInstance = new Chart(repsChartCtx, { type: 'line', data: { labels: labels, datasets: [ { label: 'Actual Reps', data: actualRepsData, borderColor: 'rgb(236, 72, 153)', tension: 0.2, fill: false, borderWidth: 2, pointBackgroundColor: 'rgb(236, 72, 153)', pointRadius: 3, pointHoverRadius: 5 }, { label: 'Target Reps (Session)', data: targetRepsData, borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], tension: 0.2, fill: false, borderWidth: 2, pointRadius: 0, pointHitRadius: 10 } ] }, options: newOptions });
+        }
+        function calculateAndDisplayTimeChart(sessionsToChart, filteredExercises) {
+            if (!timeChartCtx) return;
+            const sortedByDate = [...sessionsToChart].filter(s => s.timeCompletedSeconds != null).sort((a,b) => new Date(a.date) - new Date(b.date));
+            const labels = sortedByDate.map(w => new Date(w.date).toLocaleDateString());
+            const data = sortedByDate.map(w => w.timeCompletedSeconds);
+            if (timeChartInstance) timeChartInstance.destroy();
+            let newOptions = JSON.parse(JSON.stringify(chartDefaultOptions));
+            newOptions.scales.y.title.text = 'Time'; 
+            newOptions.plugins.tooltip.callbacks = { label: function(context) { let label = context.dataset.label || ''; if (label) { label += ': '; } if (context.parsed.y !== null) { label += formatTime(context.parsed.y); } return label; } };
+            newOptions.scales.y.ticks.callback = function(value) { return formatTime(value); };
+            newOptions.plugins.title = { display: true, text: filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") ? `Time Completed for: ${filteredExercises.join(' & ')}` : 'Overall Session Time Completed', color: chartTextColor };
+            timeChartInstance = new Chart(timeChartCtx, { type: 'line', data: { labels: labels, datasets: [{ label: 'Time Completed', data: data, borderColor: 'rgb(34, 197, 94)', tension: 0.2, fill: false, borderWidth: 2, pointBackgroundColor: 'rgb(34, 197, 94)', pointRadius: 3, pointHoverRadius: 5 }] }, options: newOptions });
+        }
+        function calculateAndDisplayRepPRs(sessionsToAnalyze, filteredExercises) { 
+            if(!repPrTableBody) return; const repPRs = {}; 
+            sessionsToAnalyze.forEach(session => { if (session.exercises) { session.exercises.forEach(ex => { if (filteredExercises && filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") && !filteredExercises.includes(ex.name)) { return; } if (ex.name && ex.weight != null && ex.reps != null && (session.format === 'single' && ex.sets != null) ) { const repsPerSet = ex.reps; if (!repPRs[ex.name]) repPRs[ex.name] = {}; if (!repPRs[ex.name][ex.weight] || repsPerSet > repPRs[ex.name][ex.weight].reps) { repPRs[ex.name][ex.weight] = { reps: repsPerSet, date: session.date, isPerArm: ex.isPerArm }; } } }); } });
+            repPrTableBody.innerHTML = ''; let hasRepPrs = false;
+            for (const exName in repPRs) { for (const weight in repPRs[exName]) { hasRepPrs = true; const row = repPrTableBody.insertRow(); row.className = 'text-slate-300 hover:bg-slate-600'; const prData = repPRs[exName][weight]; row.innerHTML = `<td class="py-2 px-3 border-b border-slate-600">${exName}</td><td class="py-2 px-3 border-b border-slate-600">${weight} kg</td><td class="py-2 px-3 border-b border-slate-600">${prData.reps} reps ${prData.isPerArm ? "(each arm)" : ""}</td><td class="py-2 px-3 border-b border-slate-600 text-xs">${new Date(prData.date).toLocaleDateString()}</td>`;}}
+            if (!hasRepPrs) repPrTableBody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-slate-500">No Rep PRs for ${filteredExercises && filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") ? 'selected exercise(s)' : 'any exercise'}.</td></tr>`;
+        }
+        function calculateAndDisplayWeightPRs(sessionsToAnalyze, filteredExercises) { 
+             if(!weightPrTableBody) return; const weightPRs = {};
+             sessionsToAnalyze.forEach(session => { if (session.exercises) { session.exercises.forEach(ex => { if (filteredExercises && filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") && !filteredExercises.includes(ex.name)) { return; } if (ex.name && ex.weight != null && ex.reps != null && (session.format === 'single' && ex.sets != null)) { const repsPerSet = ex.reps; if (!weightPRs[ex.name]) weightPRs[ex.name] = {}; if (!weightPRs[ex.name][repsPerSet] || ex.weight > weightPRs[ex.name][repsPerSet].weight) { weightPRs[ex.name][repsPerSet] = { weight: ex.weight, date: session.date, isPerArm: ex.isPerArm };}}});}});
+             weightPrTableBody.innerHTML = ''; let hasWeightPrs = false;
+             for (const exName in weightPRs) { for (const reps in weightPRs[exName]) { hasWeightPrs = true; const row = weightPrTableBody.insertRow(); row.className = 'text-slate-300 hover:bg-slate-600'; const prData = weightPRs[exName][reps]; row.innerHTML = `<td class="py-2 px-3 border-b border-slate-600">${exName}</td><td class="py-2 px-3 border-b border-slate-600">${reps} reps ${prData.isPerArm ? "(each arm)" : ""}</td><td class="py-2 px-3 border-b border-slate-600">${prData.weight} kg</td><td class="py-2 px-3 border-b border-slate-600 text-xs">${new Date(prData.date).toLocaleDateString()}</td>`;}}
+             if (!hasWeightPrs) weightPrTableBody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-slate-500">No Weight PRs for ${filteredExercises && filteredExercises.length > 0 && !filteredExercises.includes("ALL_EXERCISES") ? 'selected exercise(s)' : 'any exercise'}.</td></tr>`;
+        }
+
+        function toggleView(showViewId) { 
+            if (!formView || !progressView || !profileView || !viewToggleButtons) return;
+            formView.classList.toggle('hidden', showViewId !== 'formView'); 
+            progressView.classList.toggle('hidden', showViewId !== 'progressView');
+            profileView.classList.toggle('hidden', showViewId !== 'profileView'); 
+
+            viewToggleButtons.forEach(btn => { 
+                btn.classList.toggle('bg-blue-600', btn.dataset.view === showViewId); 
+                btn.classList.toggle('text-white', btn.dataset.view === showViewId); 
+                btn.classList.toggle('bg-slate-600', btn.dataset.view !== showViewId); 
+                btn.classList.toggle('text-slate-300', btn.dataset.view !== showViewId); 
+            });
+            if (showViewId === 'progressView') {
+                populateDateFilters();
+                populateExerciseFilter(); 
+                renderProgressData(); 
+            }
+            else if (showViewId === 'profileView') { loadUserProfile(); }
+            else if (showViewId === 'formView') { if(typeof updateDynamicFields === 'function') updateDynamicFields(); } 
+        }
+        
+        function showApp() {
+            if (landingPage && appContainer) {
+                landingPage.classList.add('hidden');
+                appContainer.classList.remove('hidden');
+                toggleView('formView'); 
+            }
+        }
+        function showLandingPage() { 
+            if (landingPage && appContainer) {
+                appContainer.classList.add('hidden');
+                landingPage.classList.remove('hidden');
+            }
+        }
+
+        function formatTime(totalSeconds) { const minutes = Math.floor(totalSeconds / 60); const seconds = totalSeconds % 60; return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`; }
+        function updateTimerUIDisplay() { if (timerDisplay) timerDisplay.textContent = formatTime(currentTimeInSeconds); }
+        function playTimerEndSound() { if (typeof Tone !== 'undefined') { if (Tone.context.state !== 'running') { Tone.start().then(() => { if (!synth) synth = new Tone.Synth().toDestination(); synth.triggerAttackRelease("C5", "8n", Tone.now()); synth.triggerAttackRelease("G5", "8n", Tone.now() + 0.2); }).catch(e => console.error("Error starting Tone.js context:", e)); } else { if (!synth) synth = new Tone.Synth().toDestination(); synth.triggerAttackRelease("C5", "8n", Tone.now()); synth.triggerAttackRelease("G5", "8n", Tone.now() + 0.2); } } else { console.warn("Tone.js not available for sound."); } }
+        function handleStartPauseTimer() { if (isTimerRunning) { clearInterval(timerInterval); isTimerRunning = false; if (startPauseTimerButton) startPauseTimerButton.textContent = 'Start'; if (startPauseTimerButton) startPauseTimerButton.classList.replace('bg-yellow-500', 'bg-green-500'); if (startPauseTimerButton) startPauseTimerButton.classList.replace('hover:bg-yellow-600', 'hover:bg-green-600'); } else { isTimerRunning = true; if (startPauseTimerButton) startPauseTimerButton.textContent = 'Pause'; if (startPauseTimerButton) startPauseTimerButton.classList.replace('bg-green-500', 'bg-yellow-500'); if (startPauseTimerButton) startPauseTimerButton.classList.replace('hover:bg-green-600', 'hover:bg-yellow-600'); timerInterval = setInterval(() => { if (isCountdownMode) { if (currentTimeInSeconds > 0) { currentTimeInSeconds--; } else { clearInterval(timerInterval); isTimerRunning = false; playTimerEndSound(); if (startPauseTimerButton) startPauseTimerButton.textContent = 'Start'; if (startPauseTimerButton) startPauseTimerButton.classList.replace('bg-yellow-500', 'bg-green-500'); if (startPauseTimerButton) startPauseTimerButton.classList.replace('hover:bg-yellow-600', 'hover:bg-green-600'); currentTimeInSeconds = countdownDurationSeconds > 0 ? countdownDurationSeconds : 0; } } else { currentTimeInSeconds++; } updateTimerUIDisplay(); }, 1000); } }
+        function handleResetTimer() { clearInterval(timerInterval); isTimerRunning = false; currentTimeInSeconds = isCountdownMode ? countdownDurationSeconds : 0; updateTimerUIDisplay(); if (startPauseTimerButton) startPauseTimerButton.textContent = 'Start'; if (startPauseTimerButton) startPauseTimerButton.classList.replace('bg-yellow-500', 'bg-green-500'); if (startPauseTimerButton) startPauseTimerButton.classList.replace('hover:bg-yellow-600', 'hover:bg-green-600'); }
+        function handleSetCountdown() { if (!setCountdownInput) return; const minutes = parseInt(setCountdownInput.value); if (!isNaN(minutes) && minutes > 0) { isCountdownMode = true; countdownDurationSeconds = minutes * 60; currentTimeInSeconds = countdownDurationSeconds; if (isTimerRunning) { clearInterval(timerInterval); isTimerRunning = false; if (startPauseTimerButton) startPauseTimerButton.textContent = 'Start'; if (startPauseTimerButton) startPauseTimerButton.classList.replace('bg-yellow-500', 'bg-green-500'); if (startPauseTimerButton) startPauseTimerButton.classList.replace('hover:bg-yellow-600', 'hover:bg-green-600'); } updateTimerUIDisplay(); alert(`Countdown set to ${minutes} minutes.`); } else { isCountdownMode = false; countdownDurationSeconds = 0; alert("Please enter a valid number of minutes for the countdown."); } }
+
+        function populateDateFilters() {
+            if (!yearFilterSelect || !monthFilterSelect) return;
+
+            const workoutYears = [...new Set(allWorkoutsData.map(w => new Date(w.date).getFullYear()))].sort((a, b) => b - a);
+            const currentYearSelection = yearFilterSelect.value;
+            yearFilterSelect.innerHTML = '<option value="ALL_TIME">All Time</option>';
+            workoutYears.forEach(year => {
+                const option = document.createElement('option');
+                option.value = year;
+                option.textContent = year;
+                yearFilterSelect.appendChild(option);
+            });
+            if (workoutYears.includes(parseInt(currentYearSelection))) {
+                yearFilterSelect.value = currentYearSelection;
+            } else {
+                yearFilterSelect.value = "ALL_TIME";
+            }
+
+            const currentMonthSelection = monthFilterSelect.value;
+            monthFilterSelect.innerHTML = '<option value="ALL_MONTHS">All Months</option>';
+            const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+            for (let i = 0; i < 12; i++) {
+                const option = document.createElement('option');
+                option.value = i; // 0-indexed month
+                option.textContent = monthNames[i];
+                monthFilterSelect.appendChild(option);
+            }
+            if (currentMonthSelection) {
+                monthFilterSelect.value = currentMonthSelection;
+            } else {
+                monthFilterSelect.value = "ALL_MONTHS";
+            }
+        }
+
+        function populateExerciseFilter() {
+            if (!exerciseFilterSelect) { console.warn("Exercise filter select element not found."); return; }
+            try {
+                const data = [{ text: 'All Exercises', value: 'ALL_EXERCISES', selected: true, placeholder: true }];
+                const loggedExerciseNames = new Set();
+                allWorkoutsData.forEach(session => { session.exercises.forEach(ex => { if (ex.name && ex.name.trim() !== "" && ex.name !== "Other") { loggedExerciseNames.add(ex.name.trim()); } }); });
+                PREDEFINED_EXERCISES.forEach(ex => { if (ex !== "Other") loggedExerciseNames.add(ex); });
+                Array.from(loggedExerciseNames).sort().forEach(exName => { data.push({ text: exName, value: exName }); });
+                if (exerciseFilterSlimSelect) { exerciseFilterSlimSelect.destroy(); }
+                exerciseFilterSlimSelect = new SlimSelect({
+                    select: '#exerciseFilterSelect', data: data,
+                    settings: { placeholderText: 'Filter by Exercises (All)', allowDeselect: true, closeOnSelect: false, selectByGroup: true },
+                    events: { afterChange: (newVal) => { console.log("Exercise filter changed:", newVal.map(item => item.value)); renderProgressData(); } }
+                });
+            } catch (e) { console.error("Error initializing SlimSelect for exercise filter:", e); if(loadingIndicator) loadingIndicator.classList.add('hidden'); alert("Error setting up exercise filter."); }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeDOMReferences();
+            
+            if (landingPage && appContainer) { appContainer.classList.add('hidden'); landingPage.classList.remove('hidden'); } 
+            else { if(appContainer) appContainer.classList.remove('hidden'); toggleView('formView'); }
+            if (getStartedButton) getStartedButton.addEventListener('click', showApp);
+            if (backToHomeButton) backToHomeButton.addEventListener('click', showLandingPage);
+            if (openTimerButton) openTimerButton.addEventListener('click', () => { if(timerModal) timerModal.classList.remove('hidden'); });
+            if (closeTimerButton) closeTimerButton.addEventListener('click', () => { if(timerModal) timerModal.classList.add('hidden'); });
+            if (setCountdownButton) setCountdownButton.addEventListener('click', handleSetCountdown);
+            if (startPauseTimerButton) startPauseTimerButton.addEventListener('click', handleStartPauseTimer);
+            if (resetTimerButton) resetTimerButton.addEventListener('click', handleResetTimer);
+            if (editProfileButton) editProfileButton.addEventListener('click', () => showProfileEditForm(true));
+            if (profileForm) profileForm.addEventListener('submit', handleSaveProfile);
+            if (cancelEditProfileButton) cancelEditProfileButton.addEventListener('click', () => showProfileEditForm(false));
+            if(workoutDateInput) workoutDateInput.valueAsDate = new Date();
+            
+            initialAuthSetup(); 
+            
+            if (workoutFormatSelect) workoutFormatSelect.addEventListener('change', updateDynamicFields);
+            updateDynamicFields();
+            
+            if (workoutForm) {
+                workoutForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    addWorkout(e);
+                });
+            } else {
+                console.error("workoutForm not found in DOMContentLoaded for listener attachment.");
+            }
+
+            if (workoutsList) workoutsList.addEventListener('click', (e) => { if (e.target && e.target.closest('.delete-workout-btn')) { const workoutId = e.target.closest('.delete-workout-btn').getAttribute('data-id'); deleteWorkoutItem(workoutId); } });
+            
+            if (viewToggleButtons) {
+                viewToggleButtons.forEach(button => {
+                    button.addEventListener('click', () => toggleView(button.dataset.view));
+                });
+            }
+
+            // Add event listeners for new date filters
+            if (yearFilterSelect) yearFilterSelect.addEventListener('change', renderProgressData);
+            if (monthFilterSelect) monthFilterSelect.addEventListener('change', renderProgressData);
+            
+            if (signInWithGoogleButton) signInWithGoogleButton.addEventListener('click', handleSignInWithGoogle);
+            if (signOutButton) signOutButton.addEventListener('click', handleSignOut);
+            updateTimerUIDisplay(); 
+        });
+    </script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-slate-900 text-slate-200 p-0 md:p-0">
+    <!-- Offline Indicator -->
+    <div id="offlineIndicator" class="hidden fixed top-0 left-0 right-0 bg-yellow-600 text-white text-sm py-2 px-4 text-center z-50">
+        <span>📵 You are offline - Changes will sync when reconnected</span>
+    </div>
+    
+    <!-- Sync Status -->
+    <div id="syncStatus" class="hidden fixed bottom-4 right-4 bg-slate-800 text-white rounded-lg shadow-lg p-3 flex items-center space-x-2 z-50">
+        <div class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+        <span id="syncStatusText">Syncing...</span>
+    </div> 
+    <div id="landingPage" class="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-slate-100 p-6 text-center fade-in">
+        <div class="max-w-4xl">
+            <h1 class="text-display mb-6 bg-gradient-to-r from-blue-400 via-purple-500 to-pink-400 bg-clip-text text-transparent">Kettlebell Tracker Pro</h1>
+            <p class="text-title text-pink-400 mb-8 slide-up">Track Your Progress. Master Your Training.</p>
+            <p class="text-body mb-12 text-xl scale-in">Simple. Effective. Built for Kettlebell Athletes.</p>
+            <div class="my-16 grid gap-8 md:grid-cols-2">
+                <div class="card card-body text-left slide-up">
+                    <h2 class="text-2xl font-semibold text-blue-400 mb-4">Why Kettlebell Tracker Pro?</h2>
+                    <p class="text-body mb-6">Whether you're chasing personal records or staying consistent with your training, this is the tool that keeps you accountable and progressing without distractions.</p>
+                    <ul class="space-y-4">
+                        <li class="flex items-start gap-3">
+                            <div class="w-2 h-2 bg-pink-400 rounded-full mt-2 flex-shrink-0"></div>
+                            <div><span class="font-semibold text-pink-400">Log Workouts in Seconds</span><br><span class="text-caption">Quick entry for Singles, Supersets, AMRAPs, and EMOMs</span></div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="w-2 h-2 bg-pink-400 rounded-full mt-2 flex-shrink-0"></div>
+                            <div><span class="font-semibold text-pink-400">Visualize Your Progress</span><br><span class="text-caption">Clear dashboards for volume, PRs, and workout frequency</span></div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="w-2 h-2 bg-pink-400 rounded-full mt-2 flex-shrink-0"></div>
+                            <div><span class="font-semibold text-pink-400">Private & Secure</span><br><span class="text-caption">Sign in with Google. Your data, your progress</span></div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="w-2 h-2 bg-pink-400 rounded-full mt-2 flex-shrink-0"></div>
+                            <div><span class="font-semibold text-pink-400">Always Accessible</span><br><span class="text-caption">Web-based and mobile-friendly. No downloads, no fuss</span></div>
+                        </li>
+                    </ul>
+                </div>
+                <div class="card card-body text-left scale-in">
+                    <h3 class="text-2xl font-semibold text-blue-400 mb-4">Built by a Kettlebell Practitioner</h3>
+                    <p class="text-body">This isn't another generic fitness app. It's built by someone who trains with kettlebells and knows what you actually need to track.</p>
+                    <div class="mt-6 p-4 bg-slate-700 rounded-lg border-l-4 border-pink-400">
+                        <p class="text-caption italic">"Simple tools for serious training. No fluff, just what works."</p>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-16 text-center">
+                <p class="text-title text-pink-400 mb-8">Ready to Train Smarter?</p>
+                <button id="getStartedButton" class="btn btn-primary btn-lg">
+                    Get Started
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5-5 5M6 12h12"></path>
+                    </svg>
+                </button>
+                <p class="mt-6 text-caption">Start Now — It's Free</p>
+                <p class="mt-2 text-xs text-gray-500">No clutter. No ads. Just your workouts, your way.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="appContainer" class="hidden">
+        <div id="customAlertModal" class="custom-modal hidden">
+            <div class="custom-modal-content">
+                <p id="customAlertMessage" class="mb-6 text-lg font-medium">Alert</p>
+                <div class="custom-modal-buttons">
+                    <button id="customAlertOk" class="btn btn-primary">OK</button>
+                </div>
+            </div>
+        </div>
+        <div id="customConfirmModal" class="custom-modal hidden">
+            <div class="custom-modal-content">
+                <p id="customConfirmMessage" class="mb-6 text-lg font-medium">Confirm</p>
+                <div class="custom-modal-buttons">
+                    <button id="customConfirmYes" class="btn btn-error">Yes</button>
+                    <button id="customConfirmNo" class="btn btn-secondary">No</button>
+                </div>
+            </div>
+        </div>
+        <div id="timerModal" class="custom-modal hidden">
+            <div class="custom-modal-content w-full max-w-md">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-2xl font-semibold text-pink-400">Workout Timer</h3>
+                    <button id="closeTimerButton" class="text-slate-400 hover:text-slate-200 text-3xl leading-none transition-colors">&times;</button>
+                </div>
+                <div id="timerDisplay" class="text-7xl font-mono font-bold text-slate-100 mb-8 text-center bg-slate-900 py-6 rounded-xl border border-slate-600">00:00</div>
+                <div class="space-y-4 mb-8">
+                    <div class="flex items-center gap-3">
+                        <input type="number" id="setCountdownInput" placeholder="Minutes" class="input-field flex-grow" min="1">
+                        <button id="setCountdownButton" class="btn btn-primary whitespace-nowrap">Set Countdown</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <button id="startPauseTimerButton" class="btn btn-success btn-lg">Start</button>
+                    <button id="resetTimerButton" class="btn btn-secondary btn-lg">Reset</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="container mx-auto card p-8 mt-0 md:mt-8 fade-in"> 
+            <header class="mb-8 text-center border-b pb-6 border-slate-700 relative"> 
+                <button id="backToHomeButton" class="absolute left-0 top-1/2 -translate-y-1/2 btn btn-sm btn-secondary">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                    Home
+                </button>
+                <h1 class="text-title bg-gradient-to-r from-blue-400 to-pink-400 bg-clip-text text-transparent">Kettlebell Tracker Pro</h1> 
+                <div class="absolute right-0 top-1/2 -translate-y-1/2">
+                     <button id="openTimerButton" class="btn btn-accent btn-sm">
+                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71z"/>
+                            <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0"/>
+                         </svg>
+                         Timer
+                     </button>
+                </div>
+                <div id="authContainer" class="mt-6 text-sm"> 
+                    <button id="signInWithGoogleButton" class="btn btn-primary">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                        Sign in with Google
+                    </button>
+                    <div id="userInfoDisplay" class="hidden text-slate-300 mt-3 p-3 bg-slate-700 rounded-lg"></div>
+                    <button id="signOutButton" class="hidden mt-3 btn btn-secondary btn-sm">Sign Out</button>
+                </div>
+                <p class="text-caption mt-3" id="authStatus">Initializing...</p>
+            </header>
+            <div id="loadingIndicator" class="fixed top-0 left-0 w-full h-full bg-slate-900 bg-opacity-90 backdrop-blur-sm flex items-center justify-center z-50 hidden">
+                <div class="card p-8 flex items-center gap-4 scale-in">
+                    <div class="loading-spinner"></div>
+                    <span class="text-xl font-medium text-slate-200">Working...</span>
+                </div>
+            </div>
+            <nav class="mb-8 flex justify-center">
+                <div class="inline-flex bg-slate-700 p-1 rounded-xl">
+                    <button data-view="formView" class="view-toggle-btn px-6 py-3 rounded-lg text-sm font-medium transition-all">
+                        <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                        </svg>
+                        Log Workout
+                    </button>
+                    <button data-view="progressView" class="view-toggle-btn px-6 py-3 rounded-lg text-sm font-medium transition-all">
+                        <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                        View Progress
+                    </button>
+                    <button data-view="profileView" class="view-toggle-btn px-6 py-3 rounded-lg text-sm font-medium transition-all">
+                        <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                        </svg>
+                        Profile
+                    </button> 
+                </div>
+            </nav>
+            
+            <div id="formView" class="hidden"> 
+                <section id="workoutInput" class="mb-10 p-6 bg-slate-700 rounded-lg shadow-inner"><h2 class="text-2xl font-semibold mb-6 text-slate-100">Log New Workout Session</h2>
+                <form id="workoutForm" class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label for="workoutDate" class="block text-sm font-medium text-slate-300 mb-1">Date</label><input type="date" id="workoutDate" name="workoutDate" required class="input-field"></div><div><label for="overallWorkoutName" class="block text-sm font-medium text-slate-300 mb-1">Session Name (Opt.)</label><input type="text" id="overallWorkoutName" name="overallWorkoutName" placeholder="e.g., Morning Strength" class="input-field"></div></div><div><label for="timeCompleted" class="block text-sm font-medium text-slate-300 mb-1">Time Completed (MM:SS - Optional)</label><input type="text" id="timeCompleted" name="timeCompleted" placeholder="e.g., 32:27" class="input-field"></div><div><label for="workoutFormat" class="block text-sm font-medium text-slate-300 mb-1">Workout Format</label><select id="workoutFormat" name="workoutFormat" class="input-field"><option value="single">Single Exercise</option><option value="superset">Superset</option><option value="amrap">AMRAP</option><option value="emom">EMOM</option></select></div><div id="dynamicFieldsContainer" class="space-y-4 mt-4"></div><div><button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">Log Session</button></div>
+                </form>
+                </section>
+                <section id="loggedWorkouts" class="mt-12"><h2 class="text-2xl font-semibold mb-6 text-slate-100">Logged Sessions</h2><div id="workoutsList" class="space-y-4"></div><p id="noWorkoutsMessage" class="text-slate-500 text-center py-6 hidden">No sessions logged.</p></section>
+            </div>
+
+            <div id="progressView" class="hidden">
+                <section class="mb-8 p-6 bg-slate-700 rounded-lg shadow-inner">
+                    <h2 class="text-2xl font-semibold mb-6 text-slate-100">Progress Dashboard</h2>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div>
+                            <label for="yearFilterSelect" class="block text-sm font-medium text-slate-300 mb-1">Filter by Year:</label>
+                            <select id="yearFilterSelect" class="input-field">
+                                <!-- Options will be populated by JavaScript -->
+                            </select>
+                        </div>
+                        <div>
+                            <label for="monthFilterSelect" class="block text-sm font-medium text-slate-300 mb-1">Filter by Month:</label>
+                            <select id="monthFilterSelect" class="input-field">
+                                <!-- Options will be populated by JavaScript -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <label for="exerciseFilterSelect" class="block text-sm font-medium text-slate-300 mb-1">Filter by Exercise(s):</label>
+                        <select id="exerciseFilterSelect" multiple class="w-full"></select>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                        <div class="bg-slate-600 p-4 rounded-lg shadow"><h3 class="text-lg font-medium text-slate-200">Workouts This Week</h3><p id="workoutsThisWeek" class="text-3xl font-bold text-pink-400">0</p></div>
+                        <div class="bg-slate-600 p-4 rounded-lg shadow"><h3 class="text-lg font-medium text-slate-200">Workouts This Month</h3><p id="workoutsThisMonth" class="text-3xl font-bold text-pink-400">0</p></div>
+                    </div>
+                    <div class="bg-slate-600 p-4 rounded-lg shadow mb-8"><h3 class="text-lg font-medium text-slate-200 mb-3" id="volumeChartTitle">Volume Over Time</h3><div class="chart-container relative"><canvas id="volumeOverTimeChart"></canvas></div></div>
+                    <div class="bg-slate-600 p-4 rounded-lg shadow mb-8"><h3 class="text-lg font-medium text-slate-200 mb-3" id="repsChartTitle">Reps vs. Target Over Time</h3><div class="chart-container relative"><canvas id="repsOverTimeChart"></canvas></div></div>
+                    <div class="bg-slate-600 p-4 rounded-lg shadow mb-8"><h3 class="text-lg font-medium text-slate-200 mb-3" id="timeChartTitle">Time Completed Over Time</h3><div class="chart-container relative"><canvas id="timeOverTimeChart"></canvas></div></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="bg-slate-600 p-4 rounded-lg shadow"><h3 class="text-lg font-medium text-slate-200 mb-3">Rep PRs</h3><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="bg-slate-500 text-slate-300"><tr><th class="py-2 px-3 text-left font-medium">Exercise</th><th class="py-2 px-3 text-left font-medium">Weight</th><th class="py-2 px-3 text-left font-medium">Best Reps</th><th class="py-2 px-3 text-left font-medium text-xs">Date</th></tr></thead><tbody id="repPrTableBody"></tbody></table></div></div>
+                        <div class="bg-slate-600 p-4 rounded-lg shadow"><h3 class="text-lg font-medium text-slate-200 mb-3">Weight PRs</h3><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="bg-slate-500 text-slate-300"><tr><th class="py-2 px-3 text-left font-medium">Exercise</th><th class="py-2 px-3 text-left font-medium">Reps</th><th class="py-2 px-3 text-left font-medium">Heaviest Wt.</th><th class="py-2 px-3 text-left font-medium text-xs">Date</th></tr></thead><tbody id="weightPrTableBody"></tbody></table></div></div>
+                    </div>
+                </section>
+            </div>
+
+            <div id="profileView" class="hidden">
+                <section class="mb-8 p-6 bg-slate-700 rounded-lg shadow-inner">
+                    <h2 class="text-2xl font-semibold mb-6 text-slate-100">Your Profile</h2>
+                    <div id="profileDisplaySection">
+                        <div class="flex flex-col items-center md:flex-row md:items-start gap-6 mb-6">
+                            <img id="profilePhotoDisplay" src="https://via.placeholder.com/150?text=No+Image" alt="Profile Picture" class="w-32 h-32 md:w-40 md:h-40 rounded-full object-cover border-4 border-slate-600">
+                            <div class="text-center md:text-left">
+                                <h3 id="profileNameDisplay" class="text-3xl font-bold text-pink-400">User Name</h3>
+                                <p id="profileAgeDisplay" class="text-slate-300 mt-1">Age: Not Specified</p>
+                                <p id="profileExperienceDisplay" class="text-slate-300 mt-1">Experience: Not Specified</p>
+                            </div>
+                        </div>
+                        <div class="space-y-4 text-slate-300 text-left">
+                            <div><h4 class="font-semibold text-slate-100">Bio:</h4><p id="profileBioDisplay" class="whitespace-pre-wrap mt-1 p-3 bg-slate-600/50 rounded-md min-h-[3em]"><em>Not set.</em></p></div>
+                            <div><h4 class="font-semibold text-slate-100">My Goals:</h4><p id="profileGoalsDisplay" class="whitespace-pre-wrap mt-1 p-3 bg-slate-600/50 rounded-md min-h-[3em]"><em>Not set.</em></p></div>
+                            <div><h4 class="font-semibold text-slate-100">My Activities:</h4><p id="profileActivitiesDisplay" class="whitespace-pre-wrap mt-1 p-3 bg-slate-600/50 rounded-md min-h-[3em]"><em>Not set.</em></p></div>
+                        </div>
+                        <button id="editProfileButton" class="mt-8 w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition-colors">Edit Profile</button>
+                    </div>
+                    <div id="profileEditSection" class="hidden">
+                        <form id="profileForm" class="space-y-6">
+                            <div><label for="profileDisplayNameInput" class="block text-sm font-medium text-slate-300 mb-1">Display Name</label><input type="text" id="profileDisplayNameInput" class="input-field"></div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div><label for="profileAgeInput" class="block text-sm font-medium text-slate-300 mb-1">Age</label><input type="number" id="profileAgeInput" class="input-field" min="0"></div>
+                                <div><label for="profileExperienceInput" class="block text-sm font-medium text-slate-300 mb-1">Kettlebell Experience</label><select id="profileExperienceInput" class="input-field"></select></div>
+                            </div>
+                             <div><label for="profileBioInput" class="block text-sm font-medium text-slate-300 mb-1">Short Bio</label><textarea id="profileBioInput" rows="3" class="input-field" placeholder="A little about yourself..."></textarea></div>
+                            <div><label for="profileGoalsInput" class="block text-sm font-medium text-slate-300 mb-1">My Training Goals</label><textarea id="profileGoalsInput" rows="4" class="input-field" placeholder="e.g., Complete 10,000 swings..."></textarea></div>
+                            <div><label for="profileActivitiesInput" class="block text-sm font-medium text-slate-300 mb-1">Other Activities/Interests</label><textarea id="profileActivitiesInput" rows="3" class="input-field" placeholder="e.g., BJJ, Running, Yoga..."></textarea></div>
+                            <div class="flex flex-col md:flex-row gap-4 mt-6">
+                                <button type="submit" id="saveProfileButton" class="w-full md:w-auto bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-6 rounded-md transition-colors">Save Profile</button>
+                                <button type="button" id="cancelEditProfileButton" class="w-full md:w-auto bg-slate-500 hover:bg-slate-400 text-slate-900 font-medium py-2 px-6 rounded-md transition-colors">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </section>
+            </div> 
+        </div>
+    </div>
+    <script> /* Custom Modal JS */
+        const customAlertModal = document.getElementById('customAlertModal'); const customAlertMessage = document.getElementById('customAlertMessage'); const customAlertOk = document.getElementById('customAlertOk'); const customConfirmModal = document.getElementById('customConfirmModal'); const customConfirmMessage = document.getElementById('customConfirmMessage'); const customConfirmYes = document.getElementById('customConfirmYes'); const customConfirmNo = document.getElementById('customConfirmNo'); let confirmResolve = null; window.alert = function(message) { customAlertMessage.textContent = message; customAlertModal.classList.remove('hidden'); }; customAlertOk.addEventListener('click', () => customAlertModal.classList.add('hidden')); window.confirm = function(message) { return new Promise((resolve) => { customConfirmMessage.textContent = message; customConfirmModal.classList.remove('hidden'); confirmResolve = resolve; }); }; customConfirmYes.addEventListener('click', () => { customConfirmModal.classList.add('hidden'); if (confirmResolve) confirmResolve(true); }); customConfirmNo.addEventListener('click', () => { customConfirmModal.classList.add('hidden'); if (confirmResolve) confirmResolve(false); });
+    </script>
+    
+    <script>
+        // Register Service Worker for offline support
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registration successful:', registration.scope);
+                        
+                        // Check for updates periodically
+                        setInterval(() => {
+                            registration.update();
+                        }, 60000); // Check every minute
+                        
+                        // Handle updates
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // New update available
+                                    if (confirm('New version available! Reload to update?')) {
+                                        newWorker.postMessage({ type: 'SKIP_WAITING' });
+                                        window.location.reload();
+                                    }
+                                }
+                            });
+                        });
+                    })
+                    .catch(error => {
+                        console.log('ServiceWorker registration failed:', error);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
