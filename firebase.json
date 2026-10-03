@@ -11,6 +11,10 @@
     ],
     "rewrites": [
       {
+        "source": "/tracker/**",
+        "destination": "/tracker/index.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

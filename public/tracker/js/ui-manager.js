@@ -176,7 +176,7 @@ export class UIManager {
         if (this.dom.viewToggleButtons) {
             this.dom.viewToggleButtons.forEach(btn => {
                 const isActive = btn.dataset.view === currentView;
-                btn.classList.toggle('bg-blue-600', isActive);
+                btn.classList.toggle('bg-emerald-600', isActive);
                 btn.classList.toggle('text-white', isActive);
                 btn.classList.toggle('bg-slate-600', !isActive);
                 btn.classList.toggle('text-slate-300', !isActive);
@@ -521,7 +521,7 @@ export class UIManager {
                     <p class="text-xs text-slate-500">${new Date(workout.date).toLocaleDateString()} - ${workout.format.toUpperCase()}</p>
                </div>
             <div class="flex gap-2">
-            <button data-workout='${JSON.stringify(workout)}' class="share-workout-btn bg-slate-600 hover:bg-blue-600 text-blue-400 hover:text-slate-100 text-xs font-bold py-1 px-2 rounded" title="Share workout">
+            <button data-workout='${JSON.stringify(workout)}' class="share-workout-btn bg-slate-600 hover:bg-emerald-600 text-emerald-400 hover:text-slate-100 text-xs font-bold py-1 px-2 rounded" title="Share workout">
             <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
             <path d="M15 8a3 3 0 10-2.977-2.63l-4.94 2.47a3 3 0 100 4.319l4.94 2.47a3 3 0 10.895-1.789l-4.94-2.47a3.027 3.027 0 000-.74l4.94-2.47C13.456 7.68 14.19 8 15 8z"></path>
             </svg>

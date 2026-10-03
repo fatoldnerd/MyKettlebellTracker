@@ -1,0 +1,20 @@
+{
+  "name": "kettlebell-tracker",
+  "version": "1.0.0",
+  "description": "Track kettlebell workouts, monitor progress, and achieve fitness goals",
+  "scripts": {
+    "dev": "npx http-server public -p 8080 -c-1",
+    "deploy": "firebase deploy",
+    "serve": "firebase serve"
+  },
+  "keywords": [
+    "kettlebell",
+    "fitness",
+    "workout",
+    "tracker",
+    "pwa"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {}
+}
