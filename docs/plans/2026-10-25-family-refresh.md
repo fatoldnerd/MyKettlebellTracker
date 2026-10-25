@@ -14,10 +14,20 @@ General tracker: reusable workout templates and a configurable exercise list, ex
 
 ## Checklist
 - [x] Review approved design, source repositories, and imagery.
-- [ ] Implement the modern interface with existing identity and data adapters.
-- [ ] Run build and meaningful calculation/state checks.
-- [ ] Verify phone and desktop flows in the browser.
+- [x] Implement the modern interface with existing identity and data adapters.
+- [x] Run build and meaningful calculation/state checks.
+- [x] Verify phone and desktop flows in the browser.
 - [ ] Publish a private review version and create a draft PR.
 
 ## Release boundaries
 Existing live domains remain unchanged. Signed-in Firebase behavior and physical-phone audio/wake lock require separate verification. Device preview is clearly labeled and cannot imply cloud saving. Shared identity across separate Firebase projects remains a later migration task.
+
+## Review evidence
+
+PASS: Verified custom setup survives entering device preview, five reps per side yields ten total reps and 160 kg with a 16 kg bell, target completion, review, device saving, history after refresh, saving/reloading a template, and EMOM waiting until the next minute. The previous /tracker/ entry redirects to the modern app. The old service worker retires only its own shell caches; local workout records are untouched.
+
+All three trackers use the same five calculation/state tests. The shared source is copied into each repository so each app remains independently buildable; it is not a deployed shared identity service. New schema records are stored alongside legacy history using the existing user-owned collection paths.
+
+Imagery is reused unchanged from the existing Command Center repository: KettlebellSnatch.png, KettlebellSwing.png, TurkishGetUp1.png, and New_Kettlebell.png. Typography and color tokens derive from the approved Armor Builder version. Active phone training screens hide photographs to keep controls readable.
+
+UNVERIFIED: live Google/email authentication, signed-in Firestore read/write and cross-device synchronization, physical iOS audio/haptics/wake lock. New hostnames may need Firebase authorized-domain configuration. Existing live domains and deployed Firestore rules were not changed. Private review sites contain no seeded workout history.

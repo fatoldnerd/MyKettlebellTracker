@@ -79,3 +79,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+node_modules/
+dist/
+.sites-runtime/
+outputs/
