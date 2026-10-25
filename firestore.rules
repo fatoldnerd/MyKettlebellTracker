@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owns(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+    // Keep the existing production data paths; enforce ownership on the server.
+    match /artifacts/my-kettlebell-app-v11-prod/users/{userId}/kettlebellWorkouts_v11/{workoutId} {
+      allow read, write: if owns(userId);
+    }
+    match /userProfiles/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
