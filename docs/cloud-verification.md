@@ -1,26 +1,56 @@
-# Kettlebell suite account and cloud verification — 25 October 2026
+# Sign-in and cloud-history verification
 
-The original public website deployments have not been replaced. Firebase authorized-domain settings and two deployed Firestore rulesets were corrected during this verification.
+Verified 25–26 October 2026. The original public website deployments have not been replaced, and no PR has been merged.
 
-## Confirmed findings and fixes
+## Result
 
-- All four review-site domains were missing from Firebase's authorized domains. Exact domains were added with Brad's explicit approval, preserving every previous entry. Missing Snatch apex, Swing www, and My Kettlebell www aliases were also added.
-- Armor Builder's local build configuration misspelled its Firebase project ID. The app now uses the public configuration retrieved from the existing production Firebase Hosting project, `armor-building-complex`, in tracked source so future builds cannot lose it through an absent or mistyped local environment file.
-- My Kettlebell Tracker's deployed rules allowed any authenticated user to access any document. Replaced with ownership checks on the existing `artifacts/my-kettlebell-app-v11-prod/users/{uid}/kettlebellWorkouts_v11` and `userProfiles/{uid}` paths. Existing document paths and formats were preserved.
-- Swing's deployed rules allowed workout ownership to be changed. Update rules now require existing and requested ownership to match. Round updates also retain their original workout parent.
-- All four trackers distinguish a server-confirmed history snapshot from cached history and a failed cloud connection. Armor history excludes writes that have not been acknowledged by the server. Account changes in the three shared trackers reset configuration to that account's settings or defaults.
+The four trackers pass Google sign-in, account-backed workout saving, server-confirmed restoration in an independent storage session, reload persistence, sign-out, and re-login. Command Center is an account-free launcher and does not store shared workout history.
 
-## Evidence
+| App | Google sign-in | Cloud save and independent restore | Reload persistence | Sign-out and re-login |
+| --- | --- | --- | --- | --- |
+| Armor Builder | PASS | PASS | PASS | PASS |
+| Snatch Tracker | PASS | PASS | PASS | PASS |
+| 10K Swing Challenge | PASS | PASS | PASS | PASS |
+| My Kettlebell Tracker | PASS | PASS | PASS | PASS |
 
-- Snatch: real Firebase client SDK signup, actual adapter payload write, independent-client password sign-in and server restore, actual history query and server subscription, token refresh, sign-out/relogin, unauthorized-account read/write denial, signed-out denial. All passed; disposable documents/accounts removed.
-- Swing: same client workflow passed for actual partial reps (6 swings). Initial ownership-transfer probe reproduced a failure; rule fix was tested before deployment and the client workflow was rerun afterward: all 13 checks passed, including ownership-transfer denial and fixture cleanup.
-- My Kettlebell rules: 19 synthetic allow/deny cases passed against the Firebase Rules API before deployment. Includes owner read/list/create/update/delete, other-user and unauthenticated denial, profile ownership, and unrelated-path denial.
-- Swing rules: 57 synthetic cases passed before deployment, including owner read/create/update/delete and cross-account/unauthenticated denial, ownership-transfer denial, and round-parent restrictions.
-- Existing model tests: Armor 4/4, shared trackers 5/5.
-- Exact Firebase rule sources were read before changes; pre-change rules and test harnesses are retained alongside this report. No real workout documents were used in client test fixtures.
+## Browser and server evidence
 
-## Pending browser verification
+Real Google sign-in was completed through the hosted review apps in Chrome. A second copy of each exact production build was served at a distinct localhost origin, with separate browser storage and Firebase authentication. That independent client signed in normally and received a server-confirmed history snapshot containing the workout created through the hosted app. This verifies independent-client cloud restoration; it is not a physical-device test.
 
-Google sign-in reached Google's account chooser after the authorized-domain repair. Google requested the owner's password; the popup was handed to Brad. Successful Google completion and signed-in UI cloud restore for Armor and My Kettlebell remain UNVERIFIED until that handoff completes. Do not approve replacement of the public sites on the strength of source checks or successful builds alone.
+- Armor: one round with two 16 kg bells; 192 kg volume; notes and duration restored.
+- Snatch: seven left and five right reps; 12 total; 192 kg volume. Both per-hand fields were independently checked in Firestore.
+- Swings: six actual swings with 24 kg; 144 kg volume; `completed` remained false. The partial workout did not become 500 swings.
+- My Kettlebell: five actual reps with 16 kg; 80 kg volume. Existing legacy history remained readable alongside the new record.
 
-The Command Center is an account-free launcher. Each tracker retains its existing separate Firebase project and account history. Completed sessions sync within that tracker. Active drafts, preferences, and templates are explicitly device-local. Cross-app single sign-on and combined history have not been implemented.
+Each hosted app retained sign-in and its server-backed history after a full reload. Each independent client cleared visible workout rows on sign-out, remained signed out after reload, and restored the cloud connection after a fresh Google sign-in. Temporary localhost clients were signed out and their servers stopped afterward.
+
+The tagged records were also queried directly in Firestore. All expected metrics matched. Five exact test documents, including the extra Armor connection-loss fixture, were removed with ownership/path/content guards. Every deletion was confirmed by a 404 response. The hosted history subscriptions reflected the deletion: zero remaining test rows in Armor, Snatch, and Swing; the existing legacy workout remained in My Kettlebell Tracker. No user accounts or real workouts were removed.
+
+Local screenshots and machine-readable checks are retained in the originating verification workspace.
+
+## Fixes already applied
+
+- Authorized the exact four review domains and missing public-domain aliases in Firebase with Brad's explicit approval, preserving existing authorized domains.
+- Corrected Armor's Firebase project ID to `armor-building-complex` using tracked public web configuration from the existing production Firebase Hosting project.
+- Replaced My Kettlebell Tracker's any-authenticated-user database access with owner-only access on its existing workout and profile paths.
+- Prevented Swing workout ownership changes and round-parent reassignment.
+- Added honest server/cache/error history status, excluded unacknowledged Armor writes from cloud history, and reset account-specific settings correctly when switching accounts.
+
+Snatch previously passed real client-SDK signup/login, adapter writes, independent server reads/queries/subscriptions, token refresh, signed-out/cross-user denial, and disposable-fixture cleanup. Swing passed all 13 corresponding checks after the ownership fix. My Kettlebell's 19 ownership-rule cases and Swing's 57 cases passed before deployment. The deployed My Kettlebell and Swing rules were read again on 26 October and exactly match the tested source files.
+
+## Scope and remaining limits
+
+- Completed workouts sync within each tracker's existing Firebase project. Each tracker retains its own account history; cross-app single sign-on and combined history have not been implemented.
+- Active drafts, preferences, and templates are device-local by design. Device-preview sessions do not automatically become cloud sessions.
+- The optional offline-save/reconnect UI test is UNVERIFIED. Scoped browser network emulation did not produce a disconnected Firebase save. The extra workout saved normally and was removed; network emulation was reset. No offline retry or duplicate-prevention pass is claimed.
+- Physical phones, Safari, and behavior after replacing the public-domain deployments were not tested in this run. The embedded preview browser did not open the Google popup; the completed browser tests used Chrome.
+
+## Tested application source
+
+The tests used these deployed review build revisions, before this report-only update:
+
+- Command Center: `3ede64cc0b32eabf29ad37f4a872570459285f17`
+- Armor: `32a128e5089419b8d0b160407394c2bd9c045863`
+- Snatch: `c2f1ba1748cb3132ef964242864753e3f5196d98`
+- Swings: `0c4e03a001ec5d2ad0cd27905183c9d52c052730`
+- My Kettlebell: `969a180fe9227c84e5b2ba0c883a4e53dcbe2651`
