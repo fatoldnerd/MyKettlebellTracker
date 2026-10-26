@@ -1,3 +1,5 @@
+> Production update (26 October 2026): the apps are now deployed to Firebase and the live-domain checks pass. See [firebase-production-release.md](firebase-production-release.md). The prelaunch report below is retained as historical evidence.
+
 # Sign-in and cloud-history verification
 
 Verified 25–26 October 2026. The original public website deployments have not been replaced, and no PR has been merged.
